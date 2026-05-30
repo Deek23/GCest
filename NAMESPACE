@@ -1,0 +1,2 @@
+useDynLib(GCest, .registration = TRUE)
+exportPattern("^[[:alpha:]]+")

@@ -1,0 +1,46 @@
+#!/bin/sh
+set -e
+
+# Compile the Backend library first:
+echo "** COMPILING THE GCest BACKEND CODE NOW! **"
+
+BUILD_DIR="src/backend/build"
+INSTALL_DIR="src"
+
+mkdir -p "$BUILD_DIR"
+mkdir -p "$INSTALL_DIR"
+
+cd "$BUILD_DIR" || {
+	echo "Build dir was not made! Check if you have permissions..."
+	exit 1
+}
+
+# CUDA 加速ビルドの切替 (環境変数 GCEST_WITH_CUDA=ON でON)
+# 既定は OFF。ON にする場合 Ceres 本体も -DUSE_CUDA=ON で再ビルドが必要。
+CUDA_OPT="${GCEST_WITH_CUDA:-OFF}"
+echo "** WITH_CUDA=${CUDA_OPT} **"
+
+cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_CUDA=${CUDA_OPT} || {
+	echo "CMake configuration failed..."
+	exit 1
+}
+
+cmake --build . || {
+	echo "Build failed..."
+	exit 1
+}
+
+# Copy the binary in src/
+DLL_NAME="libBACKEND.so"
+if [ -f "$DLL_NAME" ]; then
+	cp "$DLL_NAME" ../../$DLL_NAME
+elif [ -f "Release/$DLL_NAME" ]; then
+	cp "Release/$DLL_NAME" ../../$DLL_NAME
+else
+	echo "Could not find built $DLL_NAME"
+	exit 1
+fi
+
+echo "** SUCCESSFULLY BUILT GCest BACKEND CODE! **"
+
+exit 0

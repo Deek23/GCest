@@ -1,0 +1,17 @@
+Package: GCest
+Type: Package
+Title: Rcpp + Cmake test with ceres-solver
+Version: 0.3.0
+Author: KABEYA D.
+Authors@R: person(given = "D",
+                family = "KABEYA",
+                role = c("aut", "cre"),
+                email = "mail@hogehoge.com")
+Maintainer: KABEYA, D. <mail@hogehoge.com>
+Description: Rcpp + CMake 経由で ceres-solver を使った成長曲線推定を行う。入力は、樹高マトリクス、座標、データ数、関数No、初期パラメータ、最大試行回数 のlist （Rcpp のwrapper でラスタデータから自動生成される）。
+Depends:  R (>= 4.4.0), stats, utils
+LinkingTo: Rcpp, RcppArmadillo, terra
+Imports: Rcpp, RcppArmadillo, terra
+SystemRequirements: CMake (>= 3.18), Ceres Solver (built with -DUSE_CUDA=ON for GPU support), Eigen3, Boost (timer), nlohmann_json, optional: CUDA Toolkit (>= 11.0) and NVIDIA driver for useCUDA=TRUE
+Encoding: UTF-8
+License: MIT + file LICENSE
