@@ -16,10 +16,15 @@ inline void configureSolver(ceres::Solver::Options& options,
 
 #ifdef GCEST_USE_CUDA
   if (useCUDA) {
-    // CUDA dense linear algebra: DENSE_NORMAL_CHOLESKY + CUDA
-    // DENSE_QR は CUDA 未対応のため Cholesky を選択
-    options.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
+    // Ceres 2.2+ では DENSE_QR + CUDA が利用可能（正定値性を要求しないため頑健）
+    // 2.2 未満では DENSE_NORMAL_CHOLESKY しか CUDA 対応していないため、
+    // cusolverDnDpotrf 失敗時のフォールバック対策として damping を強める。
+    options.linear_solver_type = ceres::DENSE_QR;  // 要 Ceres >= 2.2
     options.dense_linear_algebra_library_type = ceres::CUDA;
+    // 数値的安定性向上のための保険
+    options.use_nonmonotonic_steps = true;
+    options.max_num_consecutive_invalid_steps = 10;
+    options.min_trust_region_radius = 1e-12;
     return;
   }
 #else

@@ -1,7 +1,7 @@
 Package: GCest
 Type: Package
 Title: Rcpp + Cmake test with ceres-solver
-Version: 0.3.0
+Version: 0.3.1
 Author: KABEYA D.
 Authors@R: person(given = "D",
                 family = "KABEYA",
