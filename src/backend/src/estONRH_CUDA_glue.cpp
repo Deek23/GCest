@@ -92,8 +92,34 @@ bool solveBatchedONRH_CUDA(const InBox& input_data, OutBox& outbox) {
   const int n_ages     = static_cast<int>(input_data.Data.n_rows);
   const int n_problems = static_cast<int>(input_data.Data.n_cols);
 
+  Rcpp::Rcout << "[GCest glue] solveBatchedONRH_CUDA: n_ages=" << n_ages
+              << ", n_problems=" << n_problems
+              << ", initParam.n_elem=" << input_data.initialParameter.n_elem
+              << ", Data.n_rows=" << input_data.Data.n_rows
+              << ", Data.n_cols=" << input_data.Data.n_cols
+              << ", xy.n_cols=" << input_data.xy.n_cols
+              << std::endl;
+
   if (n_problems <= 0) return true;
-  if (input_data.initialParameter.n_elem < NP) return false;
+  if (input_data.initialParameter.n_elem < (arma::uword)NP) {
+    Rcpp::Rcout << "[GCest glue] ERROR: initialParameter has only "
+                << input_data.initialParameter.n_elem << " elements (need >= "
+                << NP << ")\n";
+    return false;
+  }
+  if (input_data.xy.n_cols < (arma::uword)n_problems) {
+    Rcpp::Rcout << "[GCest glue] ERROR: xy.n_cols=" << input_data.xy.n_cols
+                << " < n_problems=" << n_problems << "\n";
+    return false;
+  }
+  // outbox is sized by caller via OutBox(n_col, n_parameter) but verify.
+  if ((int)outbox.estimated.n_cols != n_problems ||
+      (int)outbox.estimated.n_rows != NP) {
+    Rcpp::Rcout << "[GCest glue] ERROR: outbox.estimated is "
+                << outbox.estimated.n_rows << "x" << outbox.estimated.n_cols
+                << " (expected " << NP << "x" << n_problems << ")\n";
+    return false;
+  }
 
   // ---- ages = linspace(20, 100, n_ages), matching NpHGdata default ----
   std::vector<double> h_ages(n_ages);
@@ -133,6 +159,8 @@ bool solveBatchedONRH_CUDA(const InBox& input_data, OutBox& outbox) {
   std::vector<int>    h_iters(n_problems);
   std::vector<int>    h_converged(n_problems);
 
+  Rcpp::Rcout << "[GCest glue] host buffers prepared; calling launcher" << std::endl;
+
   // ---- dispatch ----
   const bool ok = launch_batched_onrh(
       h_heights.data(), n_ages, n_problems,
@@ -141,6 +169,8 @@ bool solveBatchedONRH_CUDA(const InBox& input_data, OutBox& outbox) {
       input_data.maxIteration,
       h_params.data(), h_costs.data(),
       h_iters.data(), h_converged.data());
+
+  Rcpp::Rcout << "[GCest glue] launcher returned " << (ok ? "OK" : "FAIL") << std::endl;
 
   if (!ok) return false;
 
@@ -157,6 +187,7 @@ bool solveBatchedONRH_CUDA(const InBox& input_data, OutBox& outbox) {
     }
   }
 
+  Rcpp::Rcout << "[GCest glue] OutBox populated; returning true" << std::endl;
   return true;
 }
 
