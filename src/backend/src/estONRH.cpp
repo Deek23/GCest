@@ -3,6 +3,9 @@
  * 対向非直角双曲線版
  */
 #include "backend/GCest.hpp"
+#ifdef GCEST_USE_CUDA
+#include "backend/BatchedSolver.hpp"
+#endif
 
 // 関数本体
 namespace backend
@@ -35,11 +38,29 @@ namespace backend
 		// 結果を出力用に確保
 		OutBox outbox(kNumObservations, n_parameter);
 
-// OpenMP による並列化
-// CUDA 利用時は cuBLAS/cuSOLVER ハンドルがスレッド毎に競合するため OMP を無効化
-#pragma omp parallel for if(!useCUDA)
+		// ------------------------------------------------------------------
+		// CUDA バッチソルバ経路（成功時は CPU ループをスキップ）
+		// ------------------------------------------------------------------
+		bool cuda_solved = false;
+#ifdef GCEST_USE_CUDA
+		if (useCUDA) {
+			Rcpp::Rcout << "[INFO] dispatching to CUDA batched LM solver...\n";
+			cuda_solved = backend::solveBatchedONRH_CUDA(input_data, outbox);
+			if (!cuda_solved) {
+				Rcpp::Rcout << "[WARN] CUDA batched solver failed; falling back to CPU.\n";
+			}
+		}
+#else
+		if (useCUDA) {
+			Rcpp::Rcout << "[WARN] CUDA support not compiled; using CPU path.\n";
+		}
+#endif
+
+// OpenMP による並列化 (CUDA 成功時はループを完全にスキップ)
+#pragma omp parallel for if(!cuda_solved)
 		for (int targetCol = 0; targetCol < kNumObservations; targetCol++)
 		{
+			if (cuda_solved) continue;  // CUDA 経路で計算済み
 			//   計算対象列
 			//  Rcpp:Rcout << "[col: " << targetCol + 1 << "]\n";
 

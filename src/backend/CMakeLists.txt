@@ -42,8 +42,16 @@ find_package(nlohmann_json 3.11.2 REQUIRED)
 
 # CUDA Toolkit 検出
 if(WITH_CUDA)
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 17)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+  # RTX 4000 Ada (sm_89) 想定。新しい世代を追加するなら "89;90" 等に拡張可能
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 89)
+  endif()
   find_package(CUDAToolkit REQUIRED)
   message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
+  message(STATUS "CUDA arch: ${CMAKE_CUDA_ARCHITECTURES}")
   message(STATUS "CUDA include dirs: ${CUDAToolkit_INCLUDE_DIRS}")
   add_definitions(-DGCEST_USE_CUDA)
 endif()
@@ -62,7 +70,22 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 
 # ビルド（動的ライブラリ）
 file(GLOB_RECURSE SOURCES "src/*.cpp")
+# WITH_CUDA=ON のときのみ .cu を追加してコンパイル対象に含める
+if(WITH_CUDA)
+  file(GLOB_RECURSE CUDA_SOURCES "src/cuda/*.cu")
+  list(APPEND SOURCES ${CUDA_SOURCES})
+  message(STATUS "CUDA sources: ${CUDA_SOURCES}")
+endif()
 ADD_LIBRARY(BACKEND SHARED ${SOURCES})
+
+# CUDA ビルド時のターゲットプロパティ
+if(WITH_CUDA)
+  set_target_properties(BACKEND PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    POSITION_INDEPENDENT_CODE ON
+  )
+endif()
 
 # インクルードパス
 target_include_directories(BACKEND
