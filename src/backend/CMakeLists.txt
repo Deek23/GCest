@@ -45,9 +45,12 @@ if(WITH_CUDA)
   enable_language(CUDA)
   set(CMAKE_CUDA_STANDARD 17)
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-  # RTX 4000 Ada (sm_89) 想定。新しい世代を追加するなら "89;90" 等に拡張可能
-  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 89)
+  # RTX 4000 Ada (sm_89) 想定。新しい世代を追加するなら "89;90" 等に拡張可能。
+  # 環境変数 CUDA_ARCH=86 等で上書き可能。
+  if(DEFINED ENV{CUDA_ARCH})
+    set(CMAKE_CUDA_ARCHITECTURES $ENV{CUDA_ARCH} CACHE STRING "CUDA architecture" FORCE)
+  else()
+    set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architecture" FORCE)
   endif()
   find_package(CUDAToolkit REQUIRED)
   message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")

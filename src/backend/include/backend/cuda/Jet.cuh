@@ -199,7 +199,27 @@ template <typename T, int N>
 __host__ __device__ inline bool operator==(const Jet<T, N>& f, T s) { return f.a == s; }
 
 // ---------------------------------------------------------------------------
-// Elementary functions used by the growth-curve residuals
+// Scalar overloads.
+// The growth-curve residuals are templated on T = {double, Jet<double, N>}.
+// Inside namespace gcest::cuda, unqualified lookup of sqrt/pow/exp/log for
+// a `double` argument does not fall back to ::std::sqrt etc. through ADL
+// (a `double` has no associated namespace). These thin forwarders make the
+// same source compile cleanly for both T = double and T = Jet.
+// ---------------------------------------------------------------------------
+__host__ __device__ inline double sqrt(double x) { return ::sqrt(x); }
+__host__ __device__ inline double pow (double x, double y) { return ::pow(x, y); }
+__host__ __device__ inline double exp (double x) { return ::exp(x); }
+__host__ __device__ inline double log (double x) { return ::log(x); }
+__host__ __device__ inline double abs (double x) { return ::fabs(x); }
+
+__host__ __device__ inline float  sqrt(float x) { return ::sqrtf(x); }
+__host__ __device__ inline float  pow (float x, float y) { return ::powf(x, y); }
+__host__ __device__ inline float  exp (float x) { return ::expf(x); }
+__host__ __device__ inline float  log (float x) { return ::logf(x); }
+__host__ __device__ inline float  abs (float x) { return ::fabsf(x); }
+
+// ---------------------------------------------------------------------------
+// Elementary functions used by the growth-curve residuals (Jet versions)
 // ---------------------------------------------------------------------------
 template <typename T, int N>
 __host__ __device__ inline Jet<T, N> sqrt(const Jet<T, N>& f) {
