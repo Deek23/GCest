@@ -44,7 +44,6 @@ namespace backend
 		bool cuda_solved = false;
 #ifdef GCEST_USE_CUDA
 		if (useCUDA) {
-			Rcpp::Rcout << "[INFO] dispatching to CUDA batched LM solver...\n";
 			cuda_solved = backend::solveBatchedONRH_CUDA(input_data, outbox);
 			if (!cuda_solved) {
 				Rcpp::Rcout << "[WARN] CUDA batched solver failed; falling back to CPU.\n";
