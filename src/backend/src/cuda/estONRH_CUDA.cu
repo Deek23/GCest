@@ -52,37 +52,19 @@ extern "C" bool launch_batched_onrh(
   constexpr int NP        = ONRHCurve::NP;
   constexpr int BLOCK_DIM = 64;
 
-  std::fprintf(stderr, "[GCest CUDA] launcher entry: n_problems=%d, n_ages=%d, max_iter=%d\n",
-               n_problems, n_ages, max_iter);
-  std::fflush(stderr);
-
   if (n_problems <= 0 || n_ages <= 0) return true;
 
   // Verify CUDA runtime is alive and at least one device is visible.
   int dev_count = 0;
   if (!check_cuda(cudaGetDeviceCount(&dev_count), "cudaGetDeviceCount")) return false;
   if (dev_count <= 0) {
-    std::fprintf(stderr, "[GCest CUDA] no CUDA devices found\n");
+    std::fprintf(stderr, "[GCest CUDA] ERROR: no CUDA devices found\n");
     return false;
   }
-  std::fprintf(stderr, "[GCest CUDA] cuda device count = %d\n", dev_count);
-
-  cudaDeviceProp prop;
-  if (!check_cuda(cudaGetDeviceProperties(&prop, 0), "cudaGetDeviceProperties")) return false;
-  std::fprintf(stderr, "[GCest CUDA] device 0: %s (compute %d.%d)\n",
-               prop.name, prop.major, prop.minor);
-  std::fflush(stderr);
 
   // Each Jet<double,6> intermediate is 56 bytes; ResidONRH evaluation creates
-  // ~15 of them in stack. Bump per-thread stack generously.
-  size_t prev_stack = 0;
-  cudaDeviceGetLimit(&prev_stack, cudaLimitStackSize);
-  if (!check_cuda(cudaDeviceSetLimit(cudaLimitStackSize, 16384),
-                  "cudaDeviceSetLimit(stack=16384)")) {
-    std::fprintf(stderr, "[GCest CUDA] WARNING: stack-size bump failed; previous=%zu\n",
-                 prev_stack);
-    // not fatal; continue
-  }
+  // ~15 of them in stack. Bump per-thread stack generously (non-fatal if it fails).
+  cudaDeviceSetLimit(cudaLimitStackSize, 16384);
 
   // --- Device allocations (RAII auto-frees on early return) ---
   DeviceBuf d_heights, d_ages, d_inits, d_ends;
@@ -108,9 +90,6 @@ extern "C" bool launch_batched_onrh(
   if (!check_cuda(cudaMemcpy(d_lb.p,          h_lb,          sizeof(double) * NP,                          cudaMemcpyHostToDevice), "memcpy lb"))          return false;
   if (!check_cuda(cudaMemcpy(d_ub.p,          h_ub,          sizeof(double) * NP,                          cudaMemcpyHostToDevice), "memcpy ub"))          return false;
 
-  std::fprintf(stderr, "[GCest CUDA] all uploads OK; preparing kernel launch\n");
-  std::fflush(stderr);
-
   // --- Kernel launch ---
   LMConfig cfg;
   cfg.max_iter = max_iter;
@@ -119,9 +98,6 @@ extern "C" bool launch_batched_onrh(
   const size_t shmem = batched_lm_shared_bytes<NP>(BLOCK_DIM);
   dim3 grid(n_problems);
   dim3 block(BLOCK_DIM);
-  std::fprintf(stderr, "[GCest CUDA] launching kernel: grid=%d, block=%d, shmem=%zu\n",
-               int(grid.x), int(block.x), shmem);
-  std::fflush(stderr);
 
   batched_lm_kernel<ONRHCurve, NP><<<grid, block, shmem>>>(
       static_cast<const double*>(d_heights.p),
@@ -136,11 +112,7 @@ extern "C" bool launch_batched_onrh(
       static_cast<LMResult*>(d_results.p));
 
   if (!check_cuda(cudaGetLastError(),      "kernel launch")) return false;
-  std::fprintf(stderr, "[GCest CUDA] kernel launched OK; awaiting completion\n");
-  std::fflush(stderr);
   if (!check_cuda(cudaDeviceSynchronize(), "device sync"))   return false;
-  std::fprintf(stderr, "[GCest CUDA] kernel completed\n");
-  std::fflush(stderr);
 
   // --- Device -> Host ---
   if (!check_cuda(cudaMemcpy(h_params_out, d_params.p,
@@ -160,7 +132,5 @@ extern "C" bool launch_batched_onrh(
     h_converged_out[i] = h_results[i].converged;
   }
 
-  std::fprintf(stderr, "[GCest CUDA] launcher exit OK\n");
-  std::fflush(stderr);
   return true;
 }

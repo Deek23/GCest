@@ -75,13 +75,19 @@ __host__ __device__ inline void cholesky_solve(const double* A, const double* b,
 }
 
 // Apply Levenberg-Marquardt damping in-place.
-// A_damped[i,i] += lambda * diag_orig[i]    (Marquardt-style scaling)
-// `diag_orig` must hold the diagonal of the original (un-damped) J^T J.
+//   A_damped[i,i] += lambda * max(diag_orig[i], floor)    (Marquardt-style)
+// The floor ensures damping is still applied to parameters whose Jacobian
+// columns happened to be all zero this iteration (e.g. ONRH's n_/q when no
+// sample falls on x >= c). Without this floor the diagonal stays zero,
+// Cholesky fails, and the algorithm stalls.
 template <int N>
 __host__ __device__ inline void apply_lm_damping(double* A, const double* diag_orig, double lambda) {
+  constexpr double DIAG_FLOOR = 1e-6;
 #pragma unroll
   for (int i = 0; i < N; ++i) {
-    A[i * N + i] += lambda * diag_orig[i];
+    double d = diag_orig[i];
+    if (d < DIAG_FLOOR) d = DIAG_FLOOR;
+    A[i * N + i] += lambda * d;
   }
 }
 

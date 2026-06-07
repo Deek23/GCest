@@ -47,15 +47,18 @@ namespace cuda {
 
 struct LMConfig {
   int    max_iter             = 500;
-  double initial_lambda       = 1e-3;
-  double lambda_up            = 2.0;
-  double lambda_down          = 0.7;
+  // Ceres trust-region starts at radius=1e4, equivalent to lambda ~ 1e-4.
+  // Starting with too large a lambda makes early steps too conservative and
+  // can let the algorithm get stuck near a poor initial point.
+  double initial_lambda       = 1e-4;
+  double lambda_up            = 2.0;     // Ceres uses 2.0 on bad step
+  double lambda_down          = 0.333;   // Ceres uses 1/3 on good step
   double lambda_min           = 1e-16;
   double lambda_max           = 1e+16;
   double cauchy_a             = 0.5;     // Cauchy scale; loss = a^2 log(1 + s/a^2)
-  double cost_rel_tol         = 1e-9;    // relative cost change to declare convergence
-  double param_abs_tol        = 1e-10;   // L-infty step norm tolerance
-  int    max_consecutive_fail = 10;      // safety: too many rejected steps -> stop
+  double cost_rel_tol         = 1e-8;    // relative cost change to declare convergence (Ceres uses 1e-6)
+  double param_abs_tol        = 1e-9;    // step norm tolerance (loose; cost_rel_tol is primary)
+  int    max_consecutive_fail = 25;      // tolerate transient stalls; bigger for box-bounded problems
 };
 
 struct LMResult {
@@ -163,7 +166,9 @@ __global__ void batched_lm_kernel(
     __syncthreads();
 
     const double a_cauchy = cfg.cauchy_a;
-    const double inv_a2   = 1.0 / (a_cauchy * a_cauchy);
+    const double a2       = a_cauchy * a_cauchy;
+    const double inv_a2   = 1.0 / a2;
+    const double half_a2  = 0.5 * a2;
 
     double cost_local = 0.0;
 
@@ -180,16 +185,29 @@ __global__ void batched_lm_kernel(
       }
       Jet<double, NP> r_jet = Curve::template residual<Jet<double, NP>>(x, y, p_jet);
 
-      const double r = r_jet.a;
-      const double s = r * r;
-      const double rho1 = 1.0 / (1.0 + s * inv_a2);   // rho'(s)
+      const double r    = r_jet.a;
+      const double s    = r * r;
+      // Cauchy:  rho(s)  =  a^2 * log(1 + s/a^2)
+      //          rho'(s) =  1 / (1 + s/a^2)
+      // IRLS Gauss-Newton step (no Triggs correction):
+      //   weighted residual r_w  = sqrt(rho') * r
+      //   weighted Jacobian J_w  = sqrt(rho') * J
+      //   normal eqs: (J^T W J + lambda diag) dx = J^T W r
+      // This drops Triggs' second-order term; convergence is slightly slower
+      // than Ceres but numerically stable. Implementing correct Triggs requires
+      // scaling BOTH J and r consistently (J*(1-alpha), r/(1-alpha)); the
+      // earlier asymmetric version inflated the gradient and broke convergence.
+      const double rho1 = 1.0 / (1.0 + s * inv_a2);
       const double w    = ::sqrt(rho1);
       const double rw   = r * w;
+
       double Jw[NP];
 #pragma unroll
       for (int k = 0; k < NP; ++k) Jw[k] = r_jet.v[k] * w;
 
-      cost_local += s * rho1;  // weighted squared residual contribution
+      // Actual Cauchy loss contribution (matches Ceres' final_cost convention):
+      //   cost_i = 0.5 * rho(r_i^2) = 0.5 * a^2 * log(1 + r^2 / a^2)
+      cost_local += half_a2 * ::log(1.0 + s * inv_a2);
 
       // Accumulate J^T J (lower triangle) and J^T r.
 #pragma unroll
@@ -221,8 +239,34 @@ __global__ void batched_lm_kernel(
     __syncthreads();
 
     // ------------------------------------------------------------------
-    // 3. Solve (J^T J + lambda * diag) dx = J^T r with retries on damping.
+    // 3. Solve (J^T J + lambda * diag) dx = J^T r with retries on damping
+    //    and a 1-pass active-set step for box constraints.
+    //
+    // Active-set rationale: simple clipping after an unconstrained step
+    // (p_trial = clip(p - dx, lb, ub)) gives wrong directions for free
+    // coords whenever a different coord wants to push outward at a binding
+    // bound. Instead, we detect bound-active coords up-front and force
+    // dx[k] = 0 for them by zeroing row/col k of JtJ_work and Jtr[k] before
+    // factoring. This solves the reduced problem on the free set in one
+    // Cholesky call. The detection uses the unconstrained sign of -J^T r
+    // (the steepest-descent direction), which is exact for a one-step
+    // active-set decision.
+    //
+    // Worst case: a coord is wrongly forced inactive — we'll just clip it
+    // later. Net result is no worse than the previous pure-clip behaviour.
     // ------------------------------------------------------------------
+
+    // Identify the active set from the steepest-descent direction (no solve yet).
+    // active[k] = 1 means coord k is fixed at its bound for this iteration.
+    __shared__ int active_set[NP];
+    if (tid < NP) {
+      const double g_k = Jtr[tid];           // gradient (LM solves with +J^T r)
+      const bool at_lb = (p[tid] <= lb[tid] + 1e-12) && (g_k > 0.0); // step would decrease p
+      const bool at_ub = (p[tid] >= ub[tid] - 1e-12) && (g_k < 0.0); // step would increase p
+      active_set[tid] = (at_lb || at_ub) ? 1 : 0;
+    }
+    __syncthreads();
+
     bool step_ok = false;
     int  inner_fail = 0;
     while (!step_ok && inner_fail < 6) {
@@ -232,11 +276,30 @@ __global__ void batched_lm_kernel(
 
       if (tid == 0) {
         apply_lm_damping<NP>(JtJ_work, diag0, lambda);
+
+        // Project out active coords: for each k in active set, set
+        //   JtJ_work[k, *] = JtJ_work[*, k] = 0,  JtJ_work[k, k] = 1,
+        //   Jtr[k] = 0   →  dx[k] = 0 from the solve.
+        // (We operate on the LOWER triangle only since Cholesky reads only that.)
+        for (int k = 0; k < NP; ++k) {
+          if (active_set[k]) {
+            for (int j = 0; j < NP; ++j) {
+              if (j <= k) JtJ_work[k * NP + j] = (j == k) ? 1.0 : 0.0;
+              else        JtJ_work[j * NP + k] = 0.0;  // below-diag of col k
+            }
+          }
+        }
+        // Use a scratch copy of Jtr for the solve so the next iteration sees
+        // the original (we use Jtr again for the next active-set check).
+        double Jtr_solve[NP];
+        for (int k = 0; k < NP; ++k) {
+          Jtr_solve[k] = active_set[k] ? 0.0 : Jtr[k];
+        }
+
         const bool ok = cholesky_inplace<NP>(JtJ_work);
         if (ok) {
-          cholesky_solve<NP>(JtJ_work, Jtr, dx);
+          cholesky_solve<NP>(JtJ_work, Jtr_solve, dx);
         } else {
-          // Signal failure via dx[0] = NaN.
           dx[0] = ::nan("");
         }
       }
@@ -244,7 +307,6 @@ __global__ void batched_lm_kernel(
 
       const bool ok = !::isnan(dx[0]);
       if (!ok) {
-        // Not SPD even with current damping -> increase lambda and retry.
         if (tid == 0) {
           lambda = ::fmin(lambda * cfg.lambda_up * cfg.lambda_up, cfg.lambda_max);
         }
@@ -256,7 +318,6 @@ __global__ void batched_lm_kernel(
     }
 
     if (!step_ok) {
-      // Couldn't factor even with very high damping; bail out.
       final_cost = cost;
       converged = 0;
       break;
@@ -264,6 +325,9 @@ __global__ void batched_lm_kernel(
 
     // ------------------------------------------------------------------
     // 4. Trial step p_trial = clip(p - dx, lb, ub) and evaluate new cost.
+    //    The clip is now mostly a safety net (active coords have dx=0;
+    //    free coords might still overshoot a bound, in which case clip
+    //    handles it).
     // ------------------------------------------------------------------
     if (tid < NP) {
       double np_k = p[tid] - dx[tid];
@@ -272,15 +336,15 @@ __global__ void batched_lm_kernel(
     }
     __syncthreads();
 
-    // Compute trial cost (no Jacobian needed).
+    // Compute trial cost (no Jacobian needed) using the SAME loss formula
+    // as the accumulation phase, so accept/reject is consistent.
     double trial_local = 0.0;
     for (int i = init + tid; i <= end; i += blk) {
       const double x = ages[i];
       const double y = my_heights[i];
       const double r = Curve::template residual<double>(x, y, p_trial);
       const double s = r * r;
-      const double rho1 = 1.0 / (1.0 + s * inv_a2);
-      trial_local += s * rho1;
+      trial_local += half_a2 * ::log(1.0 + s * inv_a2);
     }
     const double trial_cost = block_reduce_sum(trial_local, scratch);
 
