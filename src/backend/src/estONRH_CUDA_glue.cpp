@@ -2,10 +2,17 @@
 // double*/int* CUDA launcher (estONRH_CUDA.cu). Kept in a .cpp so that
 // Armadillo / Rcpp can be included without poisoning the .cu compilation.
 //
+// IMPORTANT — include order: RcppArmadillo.h MUST come before any header
+// that pulls in <armadillo> directly. RcppArmadillo predefines macros
+// (notably ARMA_64BIT_WORD) that change arma::Mat's internal layout. If
+// <armadillo> is included first, the resulting arma::uword is 32-bit and
+// arma::Mat's field offsets shift, causing ABI mismatch with TUs that
+// included RcppArmadillo first (e.g. estONRH.cpp via GCest.hpp).
+//
 // When WITH_CUDA=OFF, the .cu file is excluded from the build, so we
 // stub out solveBatchedONRH_CUDA() to keep the symbol resolved.
-#include "backend/BatchedSolver.hpp"
 #include "RcppArmadillo.h"
+#include "backend/BatchedSolver.hpp"
 
 #include <vector>
 #include <cstdint>

@@ -1,2 +1,5 @@
 PKG_CPPFLAGS += -I./backend/include -I/usr/local/include/eigen3 -fPIC
+# Force armadillo "current" version and 64-bit uword across RcppInterface.cpp too,
+# matching backend/CMakeLists.txt. Otherwise arma::Mat ABI differs from libBACKEND.so.
+PKG_CPPFLAGS += -DARMA_USE_CURRENT -DARMA_64BIT_WORD
 PKG_LIBS += -Wl,-rpath,\$$ORIGIN -L. -lBACKEND

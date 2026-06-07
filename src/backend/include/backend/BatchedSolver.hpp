@@ -8,10 +8,20 @@
 // Returns false if CUDA initialization, memory allocation, or kernel launch
 // fails. In that case OutBox is left untouched and the caller should fall
 // back to the CPU loop.
+//
+// IMPORTANT: every translation unit including this header MUST have
+// RcppArmadillo.h (or at minimum its config macros such as ARMA_64BIT_WORD)
+// already in scope, or the arma::Mat layout inside InBox/OutBox will not
+// match what other TUs see and reads will return garbage. The static_assert
+// below catches the mismatch at compile time.
 #pragma once
 
 #include "InBox.hpp"
 #include "OutBox.hpp"
+
+static_assert(sizeof(arma::uword) == 8,
+              "arma::uword must be 64-bit. Include RcppArmadillo.h BEFORE "
+              "BatchedSolver.hpp / InBox.hpp / OutBox.hpp.");
 
 namespace backend {
 

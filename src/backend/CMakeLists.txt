@@ -26,6 +26,11 @@ set(Eigen3_DIR /usr/local/share/eigen3)
 # glog を正しく組み込む方法
 add_definitions(-DGLOG_USE_GLOG_EXPORT)
 
+# Armadillo: 全 TU で同じバージョン (current=15.x) と 64-bit uword を強制。
+# これがないと <armadillo> の解決経路によって uword が 32-bit/64-bit に
+# ばらつき、arma::Mat の ABI が壊れる (Phase 1c で発覚した実害あり)。
+add_definitions(-DARMA_USE_CURRENT -DARMA_64BIT_WORD)
+
 # boost は静的ライブラリを使用
 set(Boost_USE_STATIC_LIBS ON)
 
