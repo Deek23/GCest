@@ -50,7 +50,11 @@ extern "C" bool launch_batched_onrh(
 {
   using namespace gcest::cuda;
   constexpr int NP        = ONRHCurve::NP;
-  constexpr int BLOCK_DIM = 64;
+  // 32 = single warp. Eliminates inter-warp atomic contention on the shared
+  // J^T J / J^T r accumulators, at the cost of each thread processing ~2.5
+  // residuals instead of ~1.25. Compute-bound workload, so this trades
+  // contention for slightly longer per-thread loops — net win expected.
+  constexpr int BLOCK_DIM = 32;
 
   if (n_problems <= 0 || n_ages <= 0) return true;
 

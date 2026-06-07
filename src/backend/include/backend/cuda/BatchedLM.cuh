@@ -161,8 +161,10 @@ __global__ void batched_lm_kernel(
     // ------------------------------------------------------------------
     // 1. Build J^T J, J^T r, and current cost via forward-mode AD.
     // ------------------------------------------------------------------
-    if (tid < NP * NP) JtJ[tid] = 0.0;
-    if (tid < NP)      Jtr[tid] = 0.0;
+    // Strided loop covers all NP*NP entries even when blockDim.x < NP*NP
+    // (critical for BLOCK_DIM=32 with NP*NP=36).
+    for (int idx = tid; idx < NP * NP; idx += blk) JtJ[idx] = 0.0;
+    if (tid < NP) Jtr[tid] = 0.0;
     __syncthreads();
 
     const double a_cauchy = cfg.cauchy_a;
@@ -270,8 +272,9 @@ __global__ void batched_lm_kernel(
     bool step_ok = false;
     int  inner_fail = 0;
     while (!step_ok && inner_fail < 6) {
-      // Copy lower triangle into JtJ_work.
-      if (tid < NP * NP) JtJ_work[tid] = JtJ[tid];
+      // Copy lower triangle into JtJ_work. Strided loop covers all NP*NP
+      // entries even when blockDim.x < NP*NP (critical for BLOCK_DIM=32).
+      for (int idx = tid; idx < NP * NP; idx += blk) JtJ_work[idx] = JtJ[idx];
       __syncthreads();
 
       if (tid == 0) {
